@@ -18,18 +18,26 @@ mooncake_lib = cpp.find_library('transfer_engine')
 
 compile_flags = []
 
+# The mooncake backend sources use no CUDA APIs; only pass cuda_dep through
+# when CUDA was actually found, so the plugin also builds on CUDA-less hosts
+# (e.g. ROCm).
+mooncake_extra_deps = []
+if cuda_dep.found()
+    mooncake_extra_deps += [cuda_dep]
+endif
+
 if 'Mooncake' in static_plugins
-    mooncake_backend_lib = static_library('Mooncake',
+    mooncake_backend_lib = static_library('MOONCAKE',
                'mooncake_backend.cpp', 'mooncake_backend.h', 'mooncake_plugin.cpp',
-               dependencies: [nixl_infra, nixl_common_dep, serdes_interface, mooncake_lib, cuda_dep],
+               dependencies: [nixl_infra, nixl_common_dep, serdes_interface, mooncake_lib] + mooncake_extra_deps,
                include_directories: nixl_inc_dirs,
                install: false,
                cpp_args : compile_flags,
                name_prefix: 'libplugin_')  # Custom prefix for plugin libraries
 else
-    mooncake_backend_lib = shared_library('Mooncake',
+    mooncake_backend_lib = shared_library('MOONCAKE',
                'mooncake_backend.cpp', 'mooncake_backend.h', 'mooncake_plugin.cpp',
-               dependencies: [nixl_infra, nixl_common_dep, serdes_interface, mooncake_lib, cuda_dep],
+               dependencies: [nixl_infra, nixl_common_dep, serdes_interface, mooncake_lib] + mooncake_extra_deps,
                include_directories: [nixl_inc_dirs, utils_inc_dirs],
                install: true,
                cpp_args : compile_flags + ['-fPIC'],
