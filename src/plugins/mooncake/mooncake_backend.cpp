@@ -85,6 +85,17 @@ nixlMooncakeEngine::nixlMooncakeEngine(const nixlBackendInitParams *init_params)
       local_agent_name_(init_params->localAgent) {
     const std::string segment_name = chooseIpAddress();
     engine_ = createTransferEngine("P2PHANDSHAKE", segment_name.c_str(), "", 0, true);
+    if (!engine_) throw std::runtime_error("MOONCAKE createTransferEngine failed");
+    const auto mode = nixl::config::getValueDefaulted("NIXL_MOONCAKE_ASYNC", std::string("0"));
+    if (mode != "0" && mode != "1") {
+        destroyTransferEngine(engine_);
+        throw std::invalid_argument("NIXL_MOONCAKE_ASYNC must be 0 or 1");
+    }
+    if (mode == "1") {
+        try { async_ = std::make_unique<nixlMooncakeAsync>(engine_); }
+        catch (...) { destroyTransferEngine(engine_); throw; }
+        NIXL_INFO << "MOONCAKE async W1 enabled: one submit/one progress worker, no chunks";
+    }
 }
 
 nixl_mem_list_t
@@ -97,6 +108,8 @@ nixlMooncakeEngine::getSupportedMems() const {
 
 // Through parent destructor the unregister will be called.
 nixlMooncakeEngine::~nixlMooncakeEngine() {
+    async_.reset(); // Drain/join before destroying the engine and its RDMA contexts.
+    clearRegistrations();
     destroyTransferEngine(engine_);
 }
 
@@ -118,6 +131,8 @@ nixlMooncakeEngine::connect(const std::string &remote_agent) {
 // Will be changed to follow NIXL's paradigm after refactoring Mooncake Transfer Engine.
 nixl_status_t
 nixlMooncakeEngine::disconnect(const std::string &remote_agent) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (async_ && async_->busy()) return NIXL_ERR_REPOST_ACTIVE;
     return NIXL_SUCCESS;
 }
 
@@ -134,9 +149,15 @@ nixl_status_t
 nixlMooncakeEngine::loadRemoteConnInfo(const std::string &remote_agent,
                                        const std::string &remote_conn_info) {
     std::lock_guard<std::mutex> lock(mutex_);
+    if (async_) {
+        auto it = connected_agents_.find(remote_agent);
+        if (it != connected_agents_.end() && it->second.conn_info == remote_conn_info)
+            return NIXL_SUCCESS;
+        if (it != connected_agents_.end() && async_->busy()) return NIXL_ERR_REPOST_ACTIVE;
+    }
     auto segment_id = openSegment(engine_, remote_conn_info.c_str());
     if (segment_id < 0) return NIXL_ERR_BACKEND;
-    connected_agents_[remote_agent].segment_id = segment_id;
+    connected_agents_[remote_agent] = {segment_id, remote_conn_info};
     return NIXL_SUCCESS;
 }
 
@@ -149,6 +170,14 @@ struct nixlMooncakeBackendMD : public nixlBackendMD {
     size_t length;
     int ref_cnt;
 };
+
+void nixlMooncakeEngine::clearRegistrations() {
+    // The core's section destructor may have attempted deregister during active
+    // work. Those rejected entries remain owned here until shutdown has drained.
+    for (auto &entry : mem_reg_info_) delete entry.second;
+    mem_reg_info_.clear();
+    // destroyTransferEngine unregisters any remaining actual MRs.
+}
 
 nixl_status_t
 nixlMooncakeEngine::registerMem(const nixlBlobDesc &mem,
@@ -176,9 +205,10 @@ nixl_status_t
 nixlMooncakeEngine::deregisterMem(nixlBackendMD *meta) {
     std::lock_guard<std::mutex> lock(mutex_);
     auto priv = (nixlMooncakeBackendMD *)meta;
-    priv->ref_cnt--;
-    if (priv->ref_cnt) return NIXL_SUCCESS;
+    if (async_ && async_->busy()) return NIXL_ERR_REPOST_ACTIVE;
+    if (priv->ref_cnt > 1) { --priv->ref_cnt; return NIXL_SUCCESS; }
     int err = unregisterLocalMemory(engine_, priv->addr);
+    if (err) return NIXL_ERR_BACKEND;
     mem_reg_info_.erase((uint64_t)priv->addr);
     delete priv;
     return err == 0 ? NIXL_SUCCESS : NIXL_ERR_BACKEND;
@@ -228,6 +258,7 @@ struct nixlMooncakeBackendReqH : public nixlBackendReqH {
 
     uint64_t batch_id = INVALID_BATCH;
     size_t request_count = 0;
+    std::shared_ptr<nixlMooncakeCompletion> completion;
 };
 
 nixl_status_t
@@ -251,6 +282,42 @@ nixlMooncakeEngine::postXfer(const nixl_xfer_op_t &operation,
                              nixlBackendReqH *&handle,
                              const nixl_opt_b_args_t *opt_args) const {
     auto priv = (nixlMooncakeBackendReqH *)handle;
+    if (async_) {
+        if (priv->completion &&
+            priv->completion->status.load(std::memory_order_acquire) == NIXL_IN_PROG)
+            return NIXL_ERR_REPOST_ACTIVE;
+        if (local.descCount() != remote.descCount() ||
+            (operation != NIXL_READ && operation != NIXL_WRITE)) return NIXL_ERR_INVALID_PARAM;
+        // Own the per-post snapshot: optimized/reused handles can change their
+        // descriptors at post time. This O(N) copy remains part of caller timing.
+        auto job = std::make_unique<nixlMooncakeAsync::Job>();
+        job->completion = std::make_shared<nixlMooncakeCompletion>();
+        job->requests.resize(local.descCount());
+        job->sender = local_agent_name_;
+        job->has_notification = opt_args && opt_args->hasNotif;
+        if (job->has_notification) job->notification = opt_args->notifMsg;
+        if (local.descCount() == 0 && job->has_notification) return NIXL_ERR_INVALID_PARAM;
+        for (size_t i = 0; i < job->requests.size(); ++i) {
+            if (local[i].len != remote[i].len ||
+                local[i].len > SIZE_MAX - job->bytes) return NIXL_ERR_INVALID_PARAM;
+            job->requests[i] = {(operation == NIXL_READ) ? OPCODE_READ : OPCODE_WRITE,
+                reinterpret_cast<void *>(local[i].addr), 0, remote[i].addr, local[i].len};
+            job->bytes += local[i].len;
+        }
+        auto completion = job->completion;
+        nixl_status_t status;
+        {
+            // Serialize admission with deregister and connection replacement.
+            // Never run a TE transfer/poll while holding this frontend mutex.
+            std::lock_guard<std::mutex> lock(mutex_);
+            auto agent = connected_agents_.find(remote_agent);
+            if (agent == connected_agents_.end()) return NIXL_ERR_INVALID_PARAM;
+            for (auto &request : job->requests) request.target_id = agent->second.segment_id;
+            status = async_->enqueue(job);
+        }
+        if (status == NIXL_IN_PROG) priv->completion = std::move(completion);
+        return status;
+    }
     int segment_id;
     {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -297,6 +364,8 @@ nixlMooncakeEngine::postXfer(const nixl_xfer_op_t &operation,
 nixl_status_t
 nixlMooncakeEngine::checkXfer(nixlBackendReqH *handle) const {
     auto priv = (nixlMooncakeBackendReqH *)handle;
+    if (async_) return priv->completion
+        ? priv->completion->status.load(std::memory_order_acquire) : NIXL_SUCCESS;
     // Once every request completed, the batch is freed below and batch_id is
     // reset to INVALID_BATCH. A later checkXfer() on the same handle must not
     // reach the engine: getTransferStatus() and freeBatchID() cast the batch
@@ -328,6 +397,13 @@ nixlMooncakeEngine::checkXfer(nixlBackendReqH *handle) const {
 nixl_status_t
 nixlMooncakeEngine::releaseReqH(nixlBackendReqH *handle) const {
     auto priv = (nixlMooncakeBackendReqH *)handle;
+    if (async_) {
+        if (priv->completion &&
+            priv->completion->status.load(std::memory_order_acquire) == NIXL_IN_PROG)
+            return NIXL_ERR_REPOST_ACTIVE;
+        delete priv;
+        return NIXL_SUCCESS;
+    }
     if (priv->batch_id != INVALID_BATCH) {
         freeBatchID(engine_, priv->batch_id);
     }

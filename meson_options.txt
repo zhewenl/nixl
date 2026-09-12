@@ -41,3 +41,6 @@ option('build_tests', type: 'boolean', value: true, description: 'Build all test
 option('build_examples', type: 'boolean', value: true, description: 'Build all examples')
 option('build_nixl_ep', type: 'boolean', value: false, description: 'Build nixl_ep example (requires sm_90 or newer)')
 option('test_all_plugins', type: 'boolean', value: false, description: 'Testing all plugins in addition to the mocks..')
+
+option('mooncake_legacy_te_build_id', type: 'string', value: '',
+       description: 'Experimental async recovery: exact b5ea3f0 HIP TE GNU build ID (requires matching headers)')

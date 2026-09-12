@@ -29,3 +29,14 @@ mooncake_backend_test = executable('mooncake_backend_test',
         include_directories: [nixl_inc_dirs, utils_inc_dirs, '../../../../src/plugins/mooncake'],
         cpp_args : cpp_args,
         install: true)
+
+# Deterministic CPU-only async lifecycle test; fake TE symbols are supplied by
+# the test executable, so no RNIC, GPU, or live peer is required.
+mooncake_async_test = executable('mooncake_async_test',
+        'async_runtime_test.cpp',
+        '../../../../src/plugins/mooncake/mooncake_async.cpp',
+        dependencies: [nixl_common_dep, thread_dep],
+        include_directories: [nixl_inc_dirs, utils_inc_dirs, '../../../../src/plugins/mooncake'],
+        cpp_args: ['-UNDEBUG'],
+        install: false)
+test('mooncake_async_lifecycle', mooncake_async_test, timeout: 30)

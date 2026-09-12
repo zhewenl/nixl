@@ -17,11 +17,16 @@ cpp = meson.get_compiler('cpp')
 mooncake_lib = cpp.find_library('transfer_engine')
 
 compile_flags = []
+legacy_build_id = get_option('mooncake_legacy_te_build_id')
+if legacy_build_id != ''
+    compile_flags += ['-DNIXL_MOONCAKE_LEGACY_TE_BUILD_ID="' + legacy_build_id + '"',
+                      '-DUSE_HIP', '-DENABLE_MULTI_PROTOCOL', '-DWITH_METRICS']
+endif
 
 # The mooncake backend sources use no CUDA APIs; only pass cuda_dep through
 # when CUDA was actually found, so the plugin also builds on CUDA-less hosts
 # (e.g. ROCm).
-mooncake_extra_deps = []
+mooncake_extra_deps = [dl_dep]
 if cuda_dep.found()
     mooncake_extra_deps += [cuda_dep]
 endif
@@ -29,6 +34,8 @@ endif
 if 'Mooncake' in static_plugins
     mooncake_backend_lib = static_library('MOONCAKE',
                'mooncake_backend.cpp', 'mooncake_backend.h', 'mooncake_plugin.cpp',
+               'mooncake_async.cpp', 'mooncake_async.h',
+               'mooncake_legacy_drain.cpp', 'mooncake_legacy_drain.h',
                dependencies: [nixl_infra, nixl_common_dep, serdes_interface, mooncake_lib] + mooncake_extra_deps,
                include_directories: nixl_inc_dirs,
                install: false,
@@ -37,6 +44,8 @@ if 'Mooncake' in static_plugins
 else
     mooncake_backend_lib = shared_library('MOONCAKE',
                'mooncake_backend.cpp', 'mooncake_backend.h', 'mooncake_plugin.cpp',
+               'mooncake_async.cpp', 'mooncake_async.h',
+               'mooncake_legacy_drain.cpp', 'mooncake_legacy_drain.h',
                dependencies: [nixl_infra, nixl_common_dep, serdes_interface, mooncake_lib] + mooncake_extra_deps,
                include_directories: [nixl_inc_dirs, utils_inc_dirs],
                install: true,

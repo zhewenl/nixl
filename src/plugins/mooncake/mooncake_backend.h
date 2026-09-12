@@ -23,6 +23,8 @@
 #include <thread>
 #include <mutex>
 #include <unordered_set>
+#include <memory>
+#include "mooncake_async.h"
 
 #include "nixl.h"
 #include "backend/backend_engine.h"
@@ -112,12 +114,15 @@ public:
     genNotif(const std::string &remote_agent, const std::string &msg) const override;
 
 private:
+    void clearRegistrations();
     struct AgentInfo {
         int segment_id;
+        std::string conn_info;
     };
 
     mutable std::mutex mutex_;
     transfer_engine_t engine_;
+    std::unique_ptr<nixlMooncakeAsync> async_;
     const std::string local_agent_name_;
     std::unordered_map<uint64_t, nixlMooncakeBackendMD *> mem_reg_info_;
     std::unordered_map<std::string, AgentInfo> connected_agents_;
