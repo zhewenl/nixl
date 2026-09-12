@@ -1194,13 +1194,14 @@ nixlAgent::releaseXferReq(nixlXferReqH *req_hndl) const {
 
         if(req_hndl->status == NIXL_IN_PROG) {
 
-            req_hndl->status = req_hndl->engine->releaseReqH(
+            const auto release_status = req_hndl->engine->releaseReqH(
                                          req_hndl->backendHandle);
 
-            if (req_hndl->status < 0) {
+            if (release_status != NIXL_SUCCESS) {
                 NIXL_ERROR_FUNC << "backend '" << req_hndl->engine->getType()
                                 << "' could not release transfer request and returned error status "
-                                << req_hndl->status;
+                                << release_status;
+                // Keep IN_PROG: a second release must not delete an active request.
                 return NIXL_ERR_REPOST_ACTIVE; // Might need renaming
             }
             // just in case the backend doesn't set to NULL on success
@@ -1549,18 +1550,16 @@ nixlAgent::invalidateRemoteMD(const std::string &remote_agent) {
     }
 
     nixl_status_t ret = NIXL_ERR_NOT_FOUND;
-    if (data->remoteSections_.erase(remote_agent) > 0) {
-        ret = NIXL_SUCCESS;
-    }
-
-    if (data->remoteBackends_.count(remote_agent) != 0) {
-        for (auto &it : data->remoteBackends_[remote_agent]) {
-            data->backendEngines_[it.first]->disconnect(remote_agent);
+    auto backends = data->remoteBackends_.find(remote_agent);
+    if (backends != data->remoteBackends_.end()) {
+        for (auto &it : backends->second) {
+            auto status = data->backendEngines_[it.first]->disconnect(remote_agent);
+            if (status != NIXL_SUCCESS) return status;
         }
-
-        data->remoteBackends_.erase(remote_agent);
+        data->remoteBackends_.erase(backends);
         ret = NIXL_SUCCESS;
     }
+    if (data->remoteSections_.erase(remote_agent) > 0) ret = NIXL_SUCCESS;
 
     if (ret == NIXL_ERR_NOT_FOUND)
         NIXL_INFO << __FUNCTION__ << ": remote metadata for agent '" << remote_agent

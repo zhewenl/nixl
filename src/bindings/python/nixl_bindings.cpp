@@ -833,7 +833,11 @@ PYBIND11_MODULE(_bindings, m) {
                  }
                  return py::bytes(remote_name);
              })
-        .def("invalidateRemoteMD", &nixlAgent::invalidateRemoteMD)
+        .def("invalidateRemoteMD", [](nixlAgent &agent, const std::string &remote_agent) {
+            auto status = agent.invalidateRemoteMD(remote_agent);
+            throw_nixl_exception(status);
+            return status;
+        })
         .def(
             "sendLocalMD",
             [](nixlAgent &agent, std::string ip_addr, int port) {

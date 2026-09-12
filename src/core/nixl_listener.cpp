@@ -799,19 +799,16 @@ nixlAgentData::invalidateRemoteData(const std::string &remote_name) {
     }
 
     nixl_status_t ret = NIXL_ERR_NOT_FOUND;
-    if (remoteSections_.erase(remote_name) > 0) {
-        ret = NIXL_SUCCESS;
-    }
-
     auto it_backends = remoteBackends_.find(remote_name);
     if (it_backends != remoteBackends_.end()) {
         for (auto &it : it_backends->second) {
-            backendEngines_[it.first]->disconnect(remote_name);
+            auto status = backendEngines_[it.first]->disconnect(remote_name);
+            if (status != NIXL_SUCCESS) return status;
         }
-
         remoteBackends_.erase(it_backends);
         ret = NIXL_SUCCESS;
     }
+    if (remoteSections_.erase(remote_name) > 0) ret = NIXL_SUCCESS;
 
     return ret;
 }

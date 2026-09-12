@@ -233,11 +233,15 @@ nixl_status_t nixlLocalSection::remDescList (const nixl_reg_dlist_t &mem_elms,
         indices.push_back(static_cast<size_t>(index));
     }
 
+    nixl_status_t result = NIXL_SUCCESS;
+    std::vector<size_t> removed;
     for (size_t idx : indices) {
-        backend->deregisterMem(target[idx].metadataP);
+        auto status = backend->deregisterMem(target[idx].metadataP);
+        if (status == NIXL_SUCCESS) removed.push_back(idx);
+        else result = status;
     }
 
-    target.remDescs(std::move(indices));
+    target.remDescs(std::move(removed));
 
     if (target.isEmpty()) {
         sectionMap.erase(sec_key); // Invalidates target.
@@ -248,7 +252,7 @@ nixl_status_t nixlLocalSection::remDescList (const nixl_reg_dlist_t &mem_elms,
         memToBackend[nixl_mem].erase(backend);
     }
 
-    return NIXL_SUCCESS;
+    return result;
 }
 
 namespace {
