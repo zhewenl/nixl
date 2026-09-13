@@ -19,6 +19,9 @@ std::atomic<bool> allow_submit{true}, allow_data{true}, allow_poll{true};
 std::atomic<int> submits{0}, queries{0}, frees{0}, notifications{0};
 std::atomic<int> failed_index{-1}, timeout_index{-1}, query_errors{0}, submit_error{0};
 std::atomic<bool> predispatch_failure{false};
+std::atomic<bool> allow_notify{true}, deliver_notify{true}, compatible{true};
+std::atomic<int> notify_error{0}, notify_attempts{0};
+std::atomic<uint64_t> allocation_error{0};
 uint64_t next_batch=1;
 void waitFor(const std::function<bool()> &predicate) {
     auto end=std::chrono::steady_clock::now()+3s;
@@ -29,6 +32,7 @@ void waitFor(const std::function<bool()> &predicate) {
 }
 extern "C" batch_id_t allocateBatchID(transfer_engine_t,size_t n) {
     std::lock_guard<std::mutex> lock(fake_mutex);
+    if (allocation_error) return allocation_error.load();
     auto id=next_batch++;batches.emplace(id,FakeBatch{n,{},{}});return id;
 }
 extern "C" int submitTransfer(transfer_engine_t,batch_id_t id,transfer_request_t *r,size_t n) {
@@ -62,13 +66,19 @@ extern "C" int freeBatchID(transfer_engine_t,batch_id_t id) {
     for(bool done:batches.at(id).done) if(!done)return 1;
     batches.erase(id);++frees;return 0;
 }
-bool nixlMooncakeLegacyDrainCompatible(){return true;}
+extern "C" int genNotifyInEngine(transfer_engine_t,uint64_t,notify_msg_t msg) {
+    ++notify_attempts;waitFor([]{return allow_notify.load();});
+    assert(std::string(msg.name)=="test" && std::string(msg.msg)=="once");
+    if(deliver_notify) ++notifications;
+    return notify_error;
+}
+bool nixlMooncakeLegacyDrainCompatible(){return compatible;}
 int nixlMooncakePrepareFailedSubmitDrain(batch_id_t){return predispatch_failure?1:0;}
 auto job(int *dst,int *src,size_t n=1,bool notify=false) {
     auto j=std::make_unique<nixlMooncakeAsync::Job>();
     j->completion=std::make_shared<nixlMooncakeCompletion>();
     for(size_t i=0;i<n;++i)j->requests.push_back({OPCODE_READ,dst+i,1,uint64_t(src+i),sizeof(int)});
-    j->bytes=n*sizeof(int);j->has_notification=notify;j->sender="test";j->notification="once";return j;
+    j->bytes=n*sizeof(int);j->segment_id=1;j->has_notification=notify;j->sender="test";j->notification="once";return j;
 }
 void terminal(const std::shared_ptr<nixlMooncakeCompletion> &c,nixl_status_t expected) {
     waitFor([&]{return c->status.load()!=NIXL_IN_PROG;});assert(c->status==expected);
@@ -129,6 +139,41 @@ int main() {
         submit_error=0;predispatch_failure=false;
         auto zero=job(dst,src,0);auto z=zero->completion;
         assert(runtime.enqueue(zero)==NIXL_IN_PROG);terminal(z,NIXL_SUCCESS);
+        // A slow notification RPC cannot block enqueue. Visible DONE waits for
+        // the original payload to be sent once, after data drain/free.
+        allow_notify=false;
+        auto notifying=job(dst,src,1,true);auto nc=notifying->completion;
+        int attempts=notify_attempts;
+        assert(runtime.enqueue(notifying)==NIXL_IN_PROG);
+        waitFor([&]{return notify_attempts>attempts;});
+        assert(nc->status==NIXL_IN_PROG && runtime.busy());
+        auto following=job(dst,src);auto fc=following->completion;
+        auto posts=submits.load();assert(runtime.enqueue(following)==NIXL_IN_PROG);
+        waitFor([&]{return submits>posts;});
+        allow_notify=true;terminal(nc,NIXL_SUCCESS);terminal(fc,NIXL_SUCCESS);
+        assert(notifications==2);
+        // Both failed delivery and delivered-but-reply-lost are surfaced. No
+        // duplicate application-level retry and no stale TE batch notification.
+        notify_error=7;deliver_notify=false;
+        auto undelivered=job(dst,src,1,true);auto uc=undelivered->completion;
+        assert(runtime.enqueue(undelivered)==NIXL_IN_PROG);terminal(uc,NIXL_ERR_BACKEND);
+        assert(notifications==2);attempts=notify_attempts;
+        deliver_notify=true;
+        auto lost_reply=job(dst,src,1,true);auto lc=lost_reply->completion;
+        assert(runtime.enqueue(lost_reply)==NIXL_IN_PROG);terminal(lc,NIXL_ERR_BACKEND);
+        assert(notifications==3 && notify_attempts==attempts+1);
+        notify_error=0;attempts=notify_attempts;
+        auto plain=job(dst,src);auto pc=plain->completion;
+        assert(runtime.enqueue(plain)==NIXL_IN_PROG);terminal(pc,NIXL_SUCCESS);
+        assert(notifications==3 && notify_attempts==attempts);
+        auto empty_note=job(dst,src,0,true);auto ec=empty_note->completion;
+        assert(runtime.enqueue(empty_note)==NIXL_IN_PROG);terminal(ec,NIXL_SUCCESS);
+        assert(notifications==4);
+        for(auto error:{INVALID_BATCH,uint64_t(-302)}) {
+            allocation_error=error;auto failed=job(dst,src);auto ac=failed->completion;
+            assert(runtime.enqueue(failed)==NIXL_IN_PROG);terminal(ac,NIXL_ERR_BACKEND);
+        }
+        allocation_error=0;
     }
     // Shutdown joins workers and drains accepted work before the engine dies.
     allow_submit=false;
@@ -138,5 +183,17 @@ int main() {
     std::thread unblock([]{std::this_thread::sleep_for(50ms);allow_submit=true;});
     runtime.reset();unblock.join();assert(c->status==NIXL_SUCCESS);
     assert(batches.empty());
-    std::cout<<"PASS: queue/bounds, independent progress, generations, partial failure, query error, timeout drain, pre-dispatch error, zero, shutdown\n";
+    compatible=false;
+    bool rejected=false;try {nixlMooncakeAsync wrong(nullptr);} catch(const std::exception &) {rejected=true;}
+    assert(rejected);compatible=true;
+    setenv("NIXL_MOONCAKE_ASYNC_MAX_DESCRIPTORS","2",1);
+    setenv("NIXL_MOONCAKE_ASYNC_MAX_BYTES","4",1);
+    {
+        nixlMooncakeAsync limits(nullptr);
+        auto bytes=job(dst,src,2),descriptors=job(dst,src,3);
+        assert(limits.enqueue(bytes)==NIXL_ERR_NOT_ALLOWED && bytes);
+        assert(limits.enqueue(descriptors)==NIXL_ERR_NOT_ALLOWED && descriptors);
+        assert(!limits.busy());
+    }
+    std::cout<<"PASS: queue/bounds, independent progress, generations, partial failure, query error, timeout drain, pre-dispatch error, zero, shutdown, notify failure/lost-reply/no-retry, allocation failure, ABI rejection, byte/descriptor bounds\n";
 }

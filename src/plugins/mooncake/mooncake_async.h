@@ -30,6 +30,9 @@ public:
         std::vector<transfer_request_t> requests;
         std::string sender, notification;
         bool has_notification = false;
+        int segment_id = 0;
+        uint64_t notify_ns = 0;
+        int notify_result = 0;
         size_t bytes = 0;
         batch_id_t batch = INVALID_BATCH;
         int submit_result = 0;

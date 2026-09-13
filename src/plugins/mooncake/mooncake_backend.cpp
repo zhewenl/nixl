@@ -296,7 +296,6 @@ nixlMooncakeEngine::postXfer(const nixl_xfer_op_t &operation,
         job->sender = local_agent_name_;
         job->has_notification = opt_args && opt_args->hasNotif;
         if (job->has_notification) job->notification = opt_args->notifMsg;
-        if (local.descCount() == 0 && job->has_notification) return NIXL_ERR_INVALID_PARAM;
         for (size_t i = 0; i < job->requests.size(); ++i) {
             if (local[i].len != remote[i].len ||
                 local[i].len > SIZE_MAX - job->bytes) return NIXL_ERR_INVALID_PARAM;
@@ -312,7 +311,8 @@ nixlMooncakeEngine::postXfer(const nixl_xfer_op_t &operation,
             std::lock_guard<std::mutex> lock(mutex_);
             auto agent = connected_agents_.find(remote_agent);
             if (agent == connected_agents_.end()) return NIXL_ERR_INVALID_PARAM;
-            for (auto &request : job->requests) request.target_id = agent->second.segment_id;
+            job->segment_id = agent->second.segment_id;
+            for (auto &request : job->requests) request.target_id = job->segment_id;
             status = async_->enqueue(job);
         }
         if (status == NIXL_IN_PROG) priv->completion = std::move(completion);

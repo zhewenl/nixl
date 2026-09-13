@@ -107,20 +107,16 @@ nixlMooncakeAsync::submitLoop() {
         auto cpu = nowNs(CLOCK_THREAD_CPUTIME_ID);
         if (!job->requests.empty()) {
             job->batch = allocateBatchID(engine_, job->requests.size());
-            if (job->batch == INVALID_BATCH) {
+            if (static_cast<int64_t>(job->batch) < 0) {
+                // The fixed legacy TE also returns negative error codes in BatchID.
+                job->batch = INVALID_BATCH;
                 job->failed = true;
-            } else if (job->has_notification) {
-                notify_msg_t msg{const_cast<char *>(job->sender.c_str()),
-                                 const_cast<char *>(job->notification.c_str())};
-                job->submit_result = submitTransferWithNotify(
-                    engine_, job->batch, job->requests.data(), job->requests.size(), msg);
             } else {
+                // NIXL owns notifications. Old TE can retain its notification
+                // map entry after a failed batch is freed and reuse that ID.
                 job->submit_result =
                     submitTransfer(engine_, job->batch, job->requests.data(), job->requests.size());
             }
-        } else if (job->has_notification) {
-            // Empty notified requests have no target in the C request vector.
-            job->failed = true;
         }
         job->failed |= job->submit_result != 0;
         job->submit_ns = nowNs() - job->submit_start_ns;
@@ -190,11 +186,26 @@ void
 nixlMooncakeAsync::finish(std::unique_ptr<Job> job) {
     const size_t n = job->requests.size(), bytes = job->bytes;
     auto completion = job->completion;
+    // Data has drained and the batch is safely freed. Send the original
+    // notification once, off the caller and without any TE-owned batch entry.
+    // A lost reply may mean delivered: never blindly retry this RPC.
+    if (!job->failed && job->has_notification) {
+        notify_msg_t msg{const_cast<char *>(job->sender.c_str()),
+                         const_cast<char *>(job->notification.c_str())};
+        auto start = nowNs();
+        job->notify_result = genNotifyInEngine(engine_, job->segment_id, msg);
+        job->notify_ns = nowNs() - start;
+        job->failed = job->notify_result != 0;
+        if (job->failed) {
+            NIXL_ERROR << "MOONCAKE async notification failed rc=" << job->notify_result;
+        }
+    }
     const auto result = job->failed ? NIXL_ERR_BACKEND : NIXL_SUCCESS;
     NIXL_INFO << "MOONCAKE async completed n=" << n << " bytes=" << bytes
               << " queue_ns=" << job->submit_start_ns - job->queued_ns
               << " submit_ns=" << job->submit_ns << " submit_cpu_ns=" << job->submit_cpu_ns
               << " poll_ns=" << job->poll_ns << " poll_cpu_ns=" << job->poll_cpu_ns
+              << " notify_ns=" << job->notify_ns << " notify_rc=" << job->notify_result
               << " polls=" << job->polls << " status=" << result;
     // Free large storage off the calling thread, before publishing completion.
     job.reset();

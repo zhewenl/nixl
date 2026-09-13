@@ -1,7 +1,7 @@
 # Experimental W1 asynchronous execution
 
 This opt-in implementation moves C API allocation, submit, polling, notification
-triggering and batch reclamation off the caller. It uses one backend-wide submit
+sending and batch reclamation off the caller. It uses one backend-wide submit
 thread and one separate progress thread. A handle remains one TE batch: no
 chunking, no new Mooncake batch query API, no Mooncake rebuild.
 
@@ -76,11 +76,19 @@ and no auto retry of a logical transfer.
 ## Costs and remaining semantics
 
 The old per-task C polling algorithm is retained, including its internal repeated
-whole-batch checks. Polling cost is moved, not eliminated. Notification still uses
-`submitTransferWithNotify`; old TE triggers the synchronous RPC on the progress
-thread. Its existing notification-error propagation limitations are unchanged.
-Explicit `genNotif` and incoming `getNotifs` remain their existing API paths.
-Separate notify workers or a typed C++ batch-query adapter are later ablations.
+whole-batch checks. Polling cost is moved, not eliminated. The async path uses
+plain `submitTransfer`: NIXL retains the original notification and calls existing
+`genNotifyInEngine` once, from the progress thread, after successful data drain
+and safe batch reclamation. Only then is success published. A nonzero RPC return
+publishes an error; it is never blindly retried, since a lost reply can mean the
+notification already arrived. Failed transfers never send the original payload.
+This avoids old TE's pending-notification map retaining a failed batch's entry
+across BatchID reuse, and avoids its swallowed notification RPC return code.
+
+The progress thread can still be held by a slow notification RPC; caller post
+and check remain independent, but other completions may wait. Explicit `genNotif`
+and incoming `getNotifs` remain their existing API paths. A separate notification
+worker or a typed C++ batch-query adapter are later ablations.
 
 Per-job logs report descriptors/bytes, queue delay, submit wall/thread CPU, poll
 wall/thread CPU, poll passes and final status. Foreground prep/post/check/release
