@@ -1,0 +1,187 @@
+--- src/plugins/mooncake/mooncake_backend.cpp	2026-09-14 23:29:50.000000000 +0000
++++ .local/diagnostic-plugin-src/mooncake_backend.cpp	2026-09-15 00:10:13.000000000 +0000
+@@ -83,6 +83,8 @@
+ nixlMooncakeEngine::nixlMooncakeEngine(const nixlBackendInitParams *init_params)
+     : nixlBackendEngine(init_params),
+       local_agent_name_(init_params->localAgent) {
++    const char* count = std::getenv("NIXL_MC_SUBMIT_THREADS");
++    if(count && (std::atoi(count)==4 || std::atoi(count)==1)) submit_pool_=std::make_unique<mcdiag::Pool>(std::atoi(count));
+     const std::string segment_name = chooseIpAddress();
+     engine_ = createTransferEngine("P2PHANDSHAKE", segment_name.c_str(), "", 0, true);
+ }
+@@ -97,6 +99,7 @@
+ 
+ // Through parent destructor the unregister will be called.
+ nixlMooncakeEngine::~nixlMooncakeEngine() {
++    submit_pool_.reset();
+     destroyTransferEngine(engine_);
+ }
+ 
+@@ -226,6 +229,11 @@
+ 
+     virtual ~nixlMooncakeBackendReqH() {}
+ 
++    struct Child {uint64_t batch=INVALID_BATCH;size_t count=0;};
++    std::vector<Child> children;
++    uint64_t diag_parent=0;
++    bool parent_notify=false;
++    std::string peer, message;
+     uint64_t batch_id = INVALID_BATCH;
+     size_t request_count = 0;
+ };
+@@ -251,6 +259,9 @@
+                              nixlBackendReqH *&handle,
+                              const nixl_opt_b_args_t *opt_args) const {
+     auto priv = (nixlMooncakeBackendReqH *)handle;
++    priv->diag_parent=mcdiag::next_id();
++    mcdiag::Scope scope(priv->diag_parent,-1,"post",local.descCount());
++    mcdiag::Timer total(mcdiag::ParentPost);
+     int segment_id;
+     {
+         std::lock_guard<std::mutex> lock(mutex_);
+@@ -261,7 +272,8 @@
+     if (local.descCount() != remote.descCount()) return NIXL_ERR_INVALID_PARAM;
+ 
+     const size_t request_count = local.descCount();
+-    if (priv->batch_id == INVALID_BATCH) {
++    if (!submit_pool_ && priv->batch_id == INVALID_BATCH) {
++        mcdiag::Timer alloc(mcdiag::Allocate);
+         uint64_t batch_id = allocateBatchID(engine_, request_count);
+         if (batch_id == INVALID_BATCH) {
+             return NIXL_ERR_BACKEND;
+@@ -270,6 +282,7 @@
+         priv->request_count = 0;
+     }
+ 
++    mcdiag::Timer build(mcdiag::BuildC);
+     transfer_request_t *request = new transfer_request_t[request_count];
+     for (size_t index = 0; index < request_count; ++index) {
+         if (local[index].len != remote[index].len) return NIXL_ERR_INVALID_PARAM;
+@@ -279,6 +292,39 @@
+         request[index].length = local[index].len;
+         request[index].target_id = segment_id;
+     }
++    build.stop();
++    if(submit_pool_) {
++        priv->children.clear();
++        const size_t chunk=(request_count+3)/4;
++        const size_t chunks=(request_count+chunk-1)/chunk;
++        priv->children.resize(chunks);
++        priv->parent_notify=opt_args && opt_args->hasNotif;
++        priv->peer=remote_agent;
++        priv->message=priv->parent_notify?opt_args->notifMsg:"";
++        std::vector<std::future<int>> futures;
++        mcdiag::Timer dispatch(mcdiag::Dispatch);
++        for(size_t c=0;c<chunks;c++) {
++            size_t begin=c*chunk;
++            size_t count=std::min(chunk,request_count-begin);
++            uint64_t queued=mcdiag::enabled()?mcdiag::now():0;
++            futures.push_back(submit_pool_->submit([&,c,begin,count,queued] {
++                mcdiag::Scope child_scope(priv->diag_parent,int(c),"child_submit",count);
++                if(mcdiag::enabled())mcdiag::add(mcdiag::QueueWait,mcdiag::now()-queued);
++                auto& child=priv->children[c];child.count=count;
++                {mcdiag::Timer alloc(mcdiag::Allocate);child.batch=allocateBatchID(engine_,count);}
++                if(child.batch==INVALID_BATCH)return -1;
++                mcdiag::Timer te(mcdiag::PluginTE);
++                return submitTransfer(engine_,child.batch,request+begin,count);
++            }));
++        }
++        dispatch.stop();
++        int result=0;
++        {mcdiag::Timer wait(mcdiag::Barrier);
++         for(auto& future:futures)if(future.get()!=0)result=-1;}
++        delete[] request;
++        return result?NIXL_ERR_BACKEND:NIXL_IN_PROG;
++    }
++    mcdiag::Timer te(mcdiag::PluginTE);
+     int rc = 0;
+     if (opt_args && opt_args->hasNotif) {
+         notify_msg_t notify_msg;
+@@ -288,6 +334,7 @@
+     } else {
+         rc = submitTransfer(engine_, priv->batch_id, request, request_count);
+     }
++    te.stop();
+     delete[] request;
+     if (rc) return NIXL_ERR_BACKEND;
+     priv->request_count += request_count;
+@@ -297,6 +344,39 @@
+ nixl_status_t
+ nixlMooncakeEngine::checkXfer(nixlBackendReqH *handle) const {
+     auto priv = (nixlMooncakeBackendReqH *)handle;
++    if(!priv->children.empty()) {
++        bool all_done=true;
++        for(size_t c=0;c<priv->children.size();c++) {
++            auto& child=priv->children[c];
++            if(child.batch==INVALID_BATCH)continue;
++            mcdiag::Scope scope(priv->diag_parent,int(c),"child_check",child.count);
++            scope.emit=false;
++            mcdiag::Timer scan(mcdiag::CheckScan);
++            bool done=true;
++            for(size_t i=0;i<child.count;i++) {
++                transfer_status_t status;
++                int rc=getTransferStatus(engine_,child.batch,i,&status);
++                if(rc||status.status==STATUS_FAILED)return NIXL_ERR_BACKEND;
++                if(status.status==STATUS_PENDING||status.status==STATUS_WAITING){done=false;break;}
++            }
++            scan.stop();
++            if(!done){all_done=false;continue;}
++            {mcdiag::Timer free_time(mcdiag::FreeBatch);
++             if(freeBatchID(engine_,child.batch))return NIXL_ERR_BACKEND;}
++            child.batch=INVALID_BATCH;
++            scope.emit=true;
++        }
++        if(!all_done)return NIXL_IN_PROG;
++        if(priv->parent_notify){
++            auto status=genNotif(priv->peer,priv->message);
++            if(status!=NIXL_SUCCESS)return status;
++            priv->parent_notify=false;
++        }
++        return NIXL_SUCCESS;
++    }
++    mcdiag::Scope scope(priv->diag_parent,-1,"check",priv->request_count);
++    scope.emit=false;
++    mcdiag::Timer scan(mcdiag::CheckScan);
+     // Once every request completed, the batch is freed below and batch_id is
+     // reset to INVALID_BATCH. A later checkXfer() on the same handle must not
+     // reach the engine: getTransferStatus() and freeBatchID() cast the batch
+@@ -314,7 +394,10 @@
+         else if (status.status == STATUS_PENDING || status.status == STATUS_WAITING)
+             return NIXL_IN_PROG;
+     }
++    scan.stop();
+     if (!has_failed) {
++        mcdiag::Timer free_time(mcdiag::FreeBatch);
++        scope.emit=true;
+         // Each batch_id has the batch size, and cannot process more requests
+         // than the batch size. So, free the batch id here to workaround the issue
+         // where the same nixlBackendReqH could be used to post multiple transfer.
+@@ -328,6 +411,9 @@
+ nixl_status_t
+ nixlMooncakeEngine::releaseReqH(nixlBackendReqH *handle) const {
+     auto priv = (nixlMooncakeBackendReqH *)handle;
++    for(auto& child:priv->children) {
++        if(child.batch!=INVALID_BATCH && freeBatchID(engine_,child.batch))return NIXL_ERR_BACKEND;
++    }
+     if (priv->batch_id != INVALID_BATCH) {
+         freeBatchID(engine_, priv->batch_id);
+     }
+--- src/plugins/mooncake/mooncake_backend.h	2026-09-14 23:29:50.000000000 +0000
++++ .local/diagnostic-plugin-src/mooncake_backend.h	2026-09-15 00:10:13.000000000 +0000
+@@ -17,6 +17,8 @@
+ #ifndef __MOONCAKE_BACKEND_H
+ #define __MOONCAKE_BACKEND_H
+ 
++#include "diag.hpp"
++#include <memory>
+ #include <vector>
+ #include <cstring>
+ #include <iostream>
+@@ -116,6 +118,7 @@
+         int segment_id;
+     };
+ 
++    std::unique_ptr<mcdiag::Pool> submit_pool_;
+     mutable std::mutex mutex_;
+     transfer_engine_t engine_;
+     const std::string local_agent_name_;

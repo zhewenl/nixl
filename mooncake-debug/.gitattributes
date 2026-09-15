@@ -1,0 +1,2 @@
+# Unified-diff context lines intentionally include a leading space.
+diagnostics/*.patch -whitespace

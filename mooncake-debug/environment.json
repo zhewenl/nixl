@@ -1,0 +1,80 @@
+{
+  "test_dates_utc": [
+    "2026-09-14",
+    "2026-09-15"
+  ],
+  "nixl": {
+    "version": "1.3.2",
+    "tested_checkout": "83359015be3dcb5281b46bb382ba384116e1c36b",
+    "runtime_source_base": "4f7f1fd425976230188a303a8adb87e133b840f7",
+    "difference": "83359015 adds only the reproduction design document"
+  },
+  "mooncake": {
+    "repository": "https://github.com/Inferact/Mooncake",
+    "access": "private; exact reproduction requires access to this revision",
+    "commit": "b5ea3f00343dfdebac40bbc1809b521a60a67eb5",
+    "build_type": "Release shared",
+    "USE_CUDA": true,
+    "USE_HIP": false,
+    "ENABLE_MULTI_PROTOCOL": false,
+    "WITH_METRICS": true,
+    "USE_INTRA_NVLINK": false,
+    "USE_MNNVL": false,
+    "USE_HTTP": false,
+    "USE_ETCD": false
+  },
+  "ucx": {
+    "version": "1.20.0",
+    "commit": "4b7a6ca8410f9cea0e15857233ecfeefdd863dde",
+    "cuda": true,
+    "rdma": true
+  },
+  "host": {
+    "os": "Ubuntu 24.04",
+    "kernel": "6.17.0-1010-gcp-64k",
+    "architecture": "aarch64",
+    "cpu": "ARM Neoverse-V2",
+    "logical_cpus": 140,
+    "cpu_sockets": 2,
+    "gpu": "NVIDIA GB200",
+    "gpu_count": 4,
+    "gpu_memory_mib_each": 189471,
+    "driver": "580.126.09",
+    "driver_reported_cuda": "13.0",
+    "cuda_toolkit": "13.1",
+    "python": "3.12.13",
+    "pytorch": "2.14.0+cu130",
+    "gcc": "13",
+    "meson": "1.12.0",
+    "abseil": "20250814.1"
+  },
+  "path": {
+    "scope": "same-host two-process GPU RDMA loopback, not cross-node",
+    "initiator_gpu": 0,
+    "target_gpu": 1,
+    "hca_both_peers": "rocep139s0:1",
+    "nvidia_peermem": false,
+    "registration": "DMA-BUF, allocation sizes rounded to 64 KiB",
+    "UCX_TLS": "rc,cuda_copy",
+    "MC_FORCE_TCP": "unset; even value 0 enables TCP at this TE revision",
+    "MC_FORCE_HCA": "1",
+    "MC_INTRA_NVLINK": "0",
+    "MC_WORKERS_PER_CTX": "2 baseline",
+    "WITH_NVIDIA_PEERMEM": "0",
+    "OMP_NUM_THREADS": "1"
+  },
+  "workload": {
+    "descriptors": 207360,
+    "descriptor_bytes": 32256,
+    "gap_bytes": 16,
+    "registered_regions_per_peer": 256,
+    "payload_bytes_per_handle": 6688604160,
+    "warmup_waves": 2,
+    "measured_waves": 10,
+    "operation": "READ",
+    "notify": true,
+    "poll_interval_us": 100,
+    "cpu_pinning": false,
+    "independent_process_restarts_per_case": 1
+  }
+}
