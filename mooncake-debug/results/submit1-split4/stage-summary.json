@@ -1,0 +1,93 @@
+{
+  "child_check": {
+    "check_scan": {
+      "n": 40,
+      "p50_ms": 209.61044099999998,
+      "max_ms": 216.872372
+    },
+    "destroy_tasks_slices": {
+      "n": 40,
+      "p50_ms": 22.1971985,
+      "max_ms": 24.258157
+    },
+    "free_batch": {
+      "n": 40,
+      "p50_ms": 22.3043345,
+      "max_ms": 24.366253
+    }
+  },
+  "child_submit": {
+    "allocate_batch": {
+      "n": 40,
+      "p50_ms": 0.0017920000000000002,
+      "max_ms": 0.117536
+    },
+    "c_to_cpp": {
+      "n": 40,
+      "p50_ms": 0.14392,
+      "max_ms": 0.270752
+    },
+    "plugin_te_wrapper": {
+      "n": 40,
+      "p50_ms": 67.9803455,
+      "max_ms": 78.813825
+    },
+    "queue_enqueue": {
+      "n": 40,
+      "p50_ms": 0.929344,
+      "max_ms": 1.210719
+    },
+    "queue_lock_wait": {
+      "n": 40,
+      "p50_ms": 0.000464,
+      "max_ms": 0.000832
+    },
+    "queue_wait": {
+      "n": 40,
+      "p50_ms": 82.650238,
+      "max_ms": 202.566719
+    },
+    "rdma_submit": {
+      "n": 40,
+      "p50_ms": 63.912988999999996,
+      "max_ms": 72.681862
+    },
+    "target_mapping_grouping": {
+      "n": 40,
+      "p50_ms": 18.727233499999997,
+      "max_ms": 21.970542
+    },
+    "task_init_transport_select": {
+      "n": 40,
+      "p50_ms": 5.101115500000001,
+      "max_ms": 6.136475
+    },
+    "te_native_submit": {
+      "n": 40,
+      "p50_ms": 67.8375775,
+      "max_ms": 78.662881
+    }
+  },
+  "post": {
+    "build_c_requests": {
+      "n": 10,
+      "p50_ms": 0.7490395000000001,
+      "max_ms": 0.775199
+    },
+    "dispatch": {
+      "n": 10,
+      "p50_ms": 0.019344,
+      "max_ms": 0.023392
+    },
+    "parent_post": {
+      "n": 10,
+      "p50_ms": 261.9694555,
+      "max_ms": 280.879008
+    },
+    "submit_barrier": {
+      "n": 10,
+      "p50_ms": 261.176784,
+      "max_ms": 280.139745
+    }
+  }
+}

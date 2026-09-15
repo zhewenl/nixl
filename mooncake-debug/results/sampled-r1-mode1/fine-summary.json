@@ -1,0 +1,236 @@
+{
+  "n": 10,
+  "fine_stride": 64,
+  "method": "fine timers estimated by attempts/sample count; coarse timers exact; no clock cost subtraction",
+  "stages": {
+    "allocate_batch": {
+      "p50": 0.00216,
+      "mean": 0.0022592,
+      "min": 0.0016,
+      "max": 0.00304
+    },
+    "build_c_requests": {
+      "p50": 1.1860305,
+      "mean": 1.3526321000000001,
+      "min": 1.102143,
+      "max": 2.067229
+    },
+    "c_to_cpp": {
+      "p50": 1.376495,
+      "mean": 1.8950479,
+      "min": 0.868639,
+      "max": 3.847932
+    },
+    "te_native_submit": {
+      "p50": 131.080313,
+      "mean": 133.7304738,
+      "min": 123.825121,
+      "max": 149.929382
+    },
+    "task_init_transport_select": {
+      "p50": 22.1572095,
+      "mean": 21.5332962,
+      "min": 18.69006,
+      "max": 23.303496
+    },
+    "rdma_submit": {
+      "p50": 109.818287,
+      "mean": 112.1900704,
+      "min": 101.962231,
+      "max": 128.029596
+    },
+    "target_mapping_grouping": {
+      "p50": 43.131299999999996,
+      "mean": 43.8282975,
+      "min": 42.035093,
+      "max": 47.566255
+    },
+    "queue_lock_wait": {
+      "p50": 0.000432,
+      "mean": 0.0004416,
+      "min": 0.000416,
+      "max": 0.000512
+    },
+    "queue_enqueue": {
+      "p50": 3.3479805000000002,
+      "mean": 3.3397373999999997,
+      "min": 3.055261,
+      "max": 3.55958
+    },
+    "plugin_te_wrapper": {
+      "p50": 132.461864,
+      "mean": 135.6289041,
+      "min": 124.93632,
+      "max": 151.284485
+    },
+    "parent_post": {
+      "p50": 134.059574,
+      "mean": 136.9864194,
+      "min": 126.042175,
+      "max": 152.452611
+    },
+    "local_select_device": {
+      "p50": 27.026400000000002,
+      "mean": 27.17856,
+      "min": 26.525696,
+      "max": 28.36064
+    },
+    "slice_calculate": {
+      "p50": 9.58048,
+      "mean": 9.6777984,
+      "min": 9.541568,
+      "max": 10.002368
+    },
+    "source_boundary": {
+      "p50": 6.94368,
+      "mean": 6.9463872,
+      "min": 6.864896,
+      "max": 7.002048
+    },
+    "target_boundary": {
+      "p50": 6.949888,
+      "mean": 7.0051776,
+      "min": 6.881216,
+      "max": 7.315456
+    },
+    "slice_allocate": {
+      "p50": 16.57136,
+      "mean": 17.5062848,
+      "min": 12.558336,
+      "max": 23.109568
+    },
+    "slice_initialize_group": {
+      "p50": 26.466304,
+      "mean": 28.039955199999998,
+      "min": 18.774016,
+      "max": 41.207744
+    },
+    "peer_select_device": {
+      "p50": 27.608032,
+      "mean": 28.0872768,
+      "min": 27.31008,
+      "max": 29.538304
+    },
+    "select_topology": {
+      "p50": 47.437792,
+      "mean": 47.7304192,
+      "min": 46.696384,
+      "max": 49.340352
+    },
+    "rdma_residual_estimate": {
+      "p50": -16.395486,
+      "mean": -17.381004500000003,
+      "min": -36.274972000000005,
+      "max": -4.6131360000000114
+    },
+    "mapping_except_peer_estimate": {
+      "p50": 15.266868,
+      "mean": 15.7410207,
+      "min": 14.125619999999998,
+      "max": 18.692112
+    },
+    "boundary_share_of_post_estimate": {
+      "p50": 0.10513969345902979,
+      "mean": 0.10227256847556267,
+      "min": 0.09108036857433685,
+      "max": 0.11070123155205787
+    }
+  },
+  "empty_timer_calibration": {
+    "intervals": 1000000,
+    "mean_empty_interval_ns": 31.3509,
+    "median_group_mean_ns": 31.104,
+    "p90_group_mean_ns": 31.904
+  },
+  "approx_clock_corrected_stages": {
+    "allocate_batch": {
+      "p50": 0.00216,
+      "mean": 0.0022592
+    },
+    "build_c_requests": {
+      "p50": 1.1860305,
+      "mean": 1.3526321000000001
+    },
+    "c_to_cpp": {
+      "p50": 1.376495,
+      "mean": 1.8950479
+    },
+    "te_native_submit": {
+      "p50": 131.080313,
+      "mean": 133.7304738
+    },
+    "task_init_transport_select": {
+      "p50": 22.1572095,
+      "mean": 21.5332962
+    },
+    "rdma_submit": {
+      "p50": 109.818287,
+      "mean": 112.1900704
+    },
+    "target_mapping_grouping": {
+      "p50": 43.131299999999996,
+      "mean": 43.8282975
+    },
+    "queue_lock_wait": {
+      "p50": 0.000432,
+      "mean": 0.0004416
+    },
+    "queue_enqueue": {
+      "p50": 3.3479805000000002,
+      "mean": 3.3397373999999997
+    },
+    "plugin_te_wrapper": {
+      "p50": 132.461864,
+      "mean": 135.6289041
+    },
+    "parent_post": {
+      "p50": 134.059574,
+      "mean": 136.9864194
+    },
+    "local_select_device": {
+      "p50": 20.525477375999998,
+      "mean": 20.677637376
+    },
+    "slice_calculate": {
+      "p50": 3.0795573759999995,
+      "mean": 3.176875776
+    },
+    "source_boundary": {
+      "p50": 0.4427573759999994,
+      "mean": 0.4454645759999997
+    },
+    "target_boundary": {
+      "p50": 0.44896537599999986,
+      "mean": 0.5042549759999998
+    },
+    "slice_allocate": {
+      "p50": 10.070437376,
+      "mean": 11.005362175999998
+    },
+    "slice_initialize_group": {
+      "p50": 19.965381376,
+      "mean": 21.539032576
+    },
+    "peer_select_device": {
+      "p50": 21.107109375999997,
+      "mean": 21.586354176
+    },
+    "select_topology": {
+      "p50": 34.43594675199999,
+      "mean": 34.728573952
+    },
+    "rdma_residual_estimate": {
+      "p50": 9.608204496000006,
+      "mean": 8.622685996000003
+    },
+    "mapping_except_peer_estimate": {
+      "p50": 21.767790624,
+      "mean": 22.241943324
+    },
+    "boundary_share_of_post_estimate": {
+      "p50": 0.007022230485536398,
+      "mean": 0.0069734548628548245
+    }
+  },
+  "clock_correction_limit": "Subtracts mean empty Timer interval per attempted call; remaining instrumentation, cache and sampling bias are not removed. Approximate, not exact accounting."
+}

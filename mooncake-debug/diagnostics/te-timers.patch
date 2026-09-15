@@ -1,0 +1,207 @@
+diff --git a/mooncake-transfer-engine/src/multi_transport.cpp b/mooncake-transfer-engine/src/multi_transport.cpp
+index 81cb0174..48c5e5b6 100644
+--- a/mooncake-transfer-engine/src/multi_transport.cpp
++++ b/mooncake-transfer-engine/src/multi_transport.cpp
+@@ -1,3 +1,4 @@
++#include "diag.hpp"
+ // Copyright 2024 KVCache.AI
+ //
+ // Licensed under the Apache License, Version 2.0 (the "License");
+@@ -104,7 +105,9 @@ Status MultiTransport::freeBatchID(BatchID batch_id) {
+                 "BatchID cannot be freed until all tasks are done");
+         }
+     }
++    mcdiag::Timer destroy(mcdiag::DestroyTasks);
+     delete &batch_desc;
++    destroy.stop();
+ #ifdef CONFIG_USE_BATCH_DESC_SET
+     RWSpinlock::WriteGuard guard(batch_desc_lock_);
+     batch_desc_set_.erase(batch_id);
+@@ -114,6 +117,7 @@ Status MultiTransport::freeBatchID(BatchID batch_id) {
+ 
+ Status MultiTransport::submitTransfer(
+     BatchID batch_id, const std::vector<TransferRequest>& entries) {
++    mcdiag::Timer prepare(mcdiag::TaskSelect);
+     auto& batch_desc = *((BatchDesc*)(batch_id));
+     if (batch_desc.task_list.size() + entries.size() > batch_desc.batch_size) {
+         return Status::TooManyRequests(
+@@ -141,6 +145,7 @@ Status MultiTransport::submitTransfer(
+         ++task_id;
+         submit_tasks[transport].push_back(&task);
+     }
++    prepare.stop();
+     Status overall_status = Status::OK();
+     for (auto& entry : submit_tasks) {
+         auto status = entry.first->submitTransferTask(entry.second);
+diff --git a/mooncake-transfer-engine/src/transfer_engine_c.cpp b/mooncake-transfer-engine/src/transfer_engine_c.cpp
+index 5ed7e99d..a5dc51a6 100644
+--- a/mooncake-transfer-engine/src/transfer_engine_c.cpp
++++ b/mooncake-transfer-engine/src/transfer_engine_c.cpp
+@@ -1,3 +1,4 @@
++#include "diag.hpp"
+ // Copyright 2024 KVCache.AI
+ //
+ // Licensed under the Apache License, Version 2.0 (the "License");
+@@ -149,6 +150,7 @@ batch_id_t allocateBatchID(transfer_engine_t engine, size_t batch_size) {
+ int submitTransfer(transfer_engine_t engine, batch_id_t batch_id,
+                    struct transfer_request *entries, size_t count) {
+     TransferEngine *native = (TransferEngine *)engine;
++    mcdiag::Timer conversion(mcdiag::CConvert);
+     std::vector<Transport::TransferRequest> native_entries;
+     native_entries.resize(count);
+     for (size_t index = 0; index < count; index++) {
+@@ -159,6 +161,8 @@ int submitTransfer(transfer_engine_t engine, batch_id_t batch_id,
+         native_entries[index].target_offset = entries[index].target_offset;
+         native_entries[index].length = entries[index].length;
+     }
++    conversion.stop();
++    mcdiag::Timer native_time(mcdiag::TENative);
+     Status s =
+         native->submitTransfer((Transport::BatchID)batch_id, native_entries);
+     return (int)s.code();
+@@ -168,6 +172,7 @@ int submitTransferWithNotify(transfer_engine_t engine, batch_id_t batch_id,
+                              struct transfer_request *entries, size_t count,
+                              notify_msg_t notify_msg) {
+     TransferEngine *native = (TransferEngine *)engine;
++    mcdiag::Timer conversion(mcdiag::CConvert);
+     std::vector<Transport::TransferRequest> native_entries;
+     native_entries.resize(count);
+     for (size_t index = 0; index < count; index++) {
+@@ -181,6 +186,8 @@ int submitTransferWithNotify(transfer_engine_t engine, batch_id_t batch_id,
+     TransferMetadata::NotifyDesc native_notify_msg;
+     native_notify_msg.name = notify_msg.name;
+     native_notify_msg.notify_msg = notify_msg.msg;
++    conversion.stop();
++    mcdiag::Timer native_time(mcdiag::TENative);
+     Status s = native->submitTransferWithNotify(
+         (Transport::BatchID)batch_id, native_entries, native_notify_msg);
+     return (int)s.code();
+diff --git a/mooncake-transfer-engine/src/transport/rdma_transport/rdma_transport.cpp b/mooncake-transfer-engine/src/transport/rdma_transport/rdma_transport.cpp
+index 265f5bf5..73688222 100644
+--- a/mooncake-transfer-engine/src/transport/rdma_transport/rdma_transport.cpp
++++ b/mooncake-transfer-engine/src/transport/rdma_transport/rdma_transport.cpp
+@@ -1,3 +1,4 @@
++#include "diag.hpp"
+ // Copyright 2024 KVCache.AI
+ //
+ // Licensed under the Apache License, Version 2.0 (the "License");
+@@ -112,12 +113,15 @@ struct SliceLengthCalculator {
+         size_t slice_length =
+             remaining <= block_size + fragment_size ? remaining : block_size;
+ 
++        mcdiag::FineTimer src_time(mcdiag::SourceBoundary);
+         const uint64_t src_rem = bytesUntilBufferEnd(
+             local_desc, reinterpret_cast<uint64_t>(request.source) + offset,
+             false, &src_buffer_idx);
+         if (src_rem > 0)
+             slice_length = std::min<uint64_t>(slice_length, src_rem);
+ 
++        src_time.stop();
++        mcdiag::FineTimer tgt_time(mcdiag::TargetBoundary);
+         const uint64_t tgt_rem = bytesUntilBufferEnd(
+             target_desc, request.target_offset + offset, true, &tgt_buffer_idx);
+         if (tgt_rem > 0)
+@@ -845,12 +849,14 @@ Status RdmaTransport::submitTransfer(
+ 
+ Status RdmaTransport::submitTransferTask(
+     const std::vector<TransferTask *> &task_list) {
++    mcdiag::Timer rdma(mcdiag::RdmaTotal);
+     std::unordered_map<std::shared_ptr<RdmaContext>, std::vector<Slice *>>
+         slices_to_post;
+     std::unordered_map<SegmentID, std::shared_ptr<SegmentDesc>>
+         target_segment_descs;
+     auto local_segment_desc = metadata_->getSegmentDescByID(LOCAL_SEGMENT_ID);
+     assert(local_segment_desc.get());
++    if(mcdiag::current)mcdiag::current->local_buffers=local_segment_desc->buffers.size();
+     const size_t kBlockSize = globalConfig().slice_size;
+     const int kMaxRetryCount = globalConfig().retry_cnt;
+     const size_t kFragmentSize = globalConfig().fragment_limit;
+@@ -905,6 +911,8 @@ Status RdmaTransport::submitTransferTask(
+         }
+         const auto &target_segment_desc = target_desc_it->second;
+ 
++        if(mcdiag::current && !mcdiag::current->target_buffers)mcdiag::current->target_buffers=target_segment_desc->buffers.size();
++        mcdiag::FineTimer local_select(mcdiag::LocalSelect);
+         auto request_buffer_id = -1, request_device_id = -1;
+         if (selectDevice(local_segment_desc.get(), (uint64_t)request.source,
+                          request.length, request_buffer_id,
+@@ -913,11 +921,15 @@ Status RdmaTransport::submitTransferTask(
+             request_device_id = -1;
+         }
+ 
++        local_select.stop();
+         SliceLengthCalculator slice_calc{request, kBlockSize, kFragmentSize,
+                                          local_segment_desc.get(),
+                                          target_segment_desc.get()};
+         for (uint64_t offset = 0; offset < request.length;) {
++            mcdiag::FineTimer calculate(mcdiag::SliceCalculate);
+             size_t slice_length = slice_calc.calculate(offset);
++            calculate.stop();
++            mcdiag::FineTimer allocate(mcdiag::SliceAllocate);
+ 
+             Slice *slice = getSliceCache().allocate();
+             assert(slice);
+@@ -925,6 +937,8 @@ Status RdmaTransport::submitTransferTask(
+                 nr_slices++;
+             }
+ 
++            allocate.stop();
++            mcdiag::FineTimer initialize(mcdiag::SliceInitialize);
+             slice->source_addr = (char *)request.source + offset;
+             slice->length = slice_length;
+             slice->source_location.clear();
+@@ -994,6 +1008,7 @@ Status RdmaTransport::submitTransferTask(
+                 __sync_fetch_and_add(&task.slice_count, 1);
+             }
+ 
++            initialize.stop();
+             if (nr_slices >= kSubmitWatermark) {
+                 for (auto &entry : slices_to_post)
+                     entry.first->submitPostSend(entry.second);
+@@ -1160,6 +1175,7 @@ static int selectRegisteredDevice(RdmaTransport::SegmentDesc *desc,
+                                   const std::string &location,
+                                   std::string_view hint, int retry_count,
+                                   bool hca_affinity) {
++    mcdiag::FineTimer topology(mcdiag::SelectTopology);
+     const auto &hca_list = desc->topology.getHcaList();
+     if (desc->devices.empty() || hca_list.empty()) return ERR_DEVICE_NOT_FOUND;
+     const auto registered_device = [&](int topology_id) -> int {
+diff --git a/mooncake-transfer-engine/src/transport/rdma_transport/worker_pool.cpp b/mooncake-transfer-engine/src/transport/rdma_transport/worker_pool.cpp
+index c6938b27..c27923d2 100644
+--- a/mooncake-transfer-engine/src/transport/rdma_transport/worker_pool.cpp
++++ b/mooncake-transfer-engine/src/transport/rdma_transport/worker_pool.cpp
+@@ -1,3 +1,4 @@
++#include "diag.hpp"
+ // Copyright 2024 KVCache.AI
+ //
+ // Licensed under the Apache License, Version 2.0 (the "License");
+@@ -52,6 +53,7 @@ static int selectPeerDevice(RdmaTransport::SegmentDesc *peer_segment_desc,
+                             uint64_t offset, size_t length,
+                             const std::string &local_hca, int &buffer_id,
+                             int &device_id, int retry_count = 0) {
++    mcdiag::FineTimer peer_select(mcdiag::PeerSelect);
+     const auto &config = globalConfig();
+     if (config.enable_hca_peer_affinity) {
+         return RdmaTransport::selectDeviceByLocalHca(
+@@ -115,6 +117,7 @@ WorkerPool::~WorkerPool() {
+ 
+ int WorkerPool::submitPostSend(
+     const std::vector<Transport::Slice *> &slice_list) {
++    mcdiag::Timer mapping(mcdiag::TargetMap);
+ #ifdef CONFIG_CACHE_SEGMENT_DESC
+     thread_local uint64_t tl_last_cache_ts = getCurrentTimeInNano();
+     thread_local std::unordered_map<SegmentID,
+@@ -252,9 +255,13 @@ int WorkerPool::submitPostSend(
+         submitted_slice_count++;
+     }
+ 
++    mapping.stop();
+     for (int shard_id = 0; shard_id < kShardCount; ++shard_id) {
+         if (slice_list_map[shard_id].empty()) continue;
++        mcdiag::Timer lock_time(mcdiag::QueueLock);
+         slice_queue_lock_[shard_id].lock();
++        lock_time.stop();
++        mcdiag::Timer enqueue_time(mcdiag::Enqueue);
+         for (auto &slice : slice_list_map[shard_id])
+             slice_queue_[shard_id][slice->peer_nic_path].push_back(slice);
+         slice_queue_count_[shard_id].fetch_add(slice_list_map[shard_id].size(),

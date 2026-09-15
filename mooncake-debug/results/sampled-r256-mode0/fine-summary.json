@@ -1,0 +1,73 @@
+{
+  "n": 10,
+  "fine_stride": 64,
+  "method": "fine timers estimated by attempts/sample count; coarse timers exact; no clock cost subtraction",
+  "stages": {
+    "allocate_batch": {
+      "p50": 0.002688,
+      "mean": 0.0026655999999999997,
+      "min": 0.00208,
+      "max": 0.003168
+    },
+    "build_c_requests": {
+      "p50": 1.714607,
+      "mean": 1.7741586,
+      "min": 1.161087,
+      "max": 2.293278
+    },
+    "c_to_cpp": {
+      "p50": 1.5725425,
+      "mean": 2.122475,
+      "min": 1.022047,
+      "max": 3.542814
+    },
+    "te_native_submit": {
+      "p50": 258.12989849999997,
+      "mean": 257.0861267,
+      "min": 249.046771,
+      "max": 267.551491
+    },
+    "task_init_transport_select": {
+      "p50": 21.347966,
+      "mean": 21.472795,
+      "min": 18.728369,
+      "max": 23.154284
+    },
+    "rdma_submit": {
+      "p50": 235.995581,
+      "mean": 235.6046373,
+      "min": 226.358181,
+      "max": 246.445748
+    },
+    "target_mapping_grouping": {
+      "p50": 68.27852,
+      "mean": 68.8678664,
+      "min": 66.367497,
+      "max": 73.679075
+    },
+    "queue_lock_wait": {
+      "p50": 0.00056,
+      "mean": 0.000592,
+      "min": 0.000448,
+      "max": 0.000896
+    },
+    "queue_enqueue": {
+      "p50": 3.476301,
+      "mean": 3.4162787,
+      "min": 3.111005,
+      "max": 3.763613
+    },
+    "plugin_te_wrapper": {
+      "p50": 259.87330499999996,
+      "mean": 259.2125377,
+      "min": 250.452465,
+      "max": 270.614433
+    },
+    "parent_post": {
+      "p50": 261.109848,
+      "mean": 260.9921907,
+      "min": 252.186256,
+      "max": 272.876639
+    }
+  }
+}
