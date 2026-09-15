@@ -1,5 +1,9 @@
 # Mooncake large-descriptor debug package
 
+**This is the fully async experimental branch. Read [ASYNC_PORT.md](ASYNC_PORT.md)
+for provenance, opt-in behavior and the AMD/HIP adapter constraint. The historical
+results below describe the synchronous baseline, not an async GPU qualification.**
+
 This branch pins the **tested NIXL 1.3.2 baseline**, not this fork's current 1.5.0
 `main`. It contains commit `4f7f1fd425976230188a303a8adb87e133b840f7` unchanged:
 canonical shared/static library names, conditional CUDA build dependency, and
