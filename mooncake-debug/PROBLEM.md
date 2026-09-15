@@ -1,5 +1,7 @@
 # Mooncake: high submit and completion-query CPU cost for 200k descriptors
 
+Tracking: [zhewenl/nixl#3](https://github.com/zhewenl/nixl/issues/3).
+
 ## Scope and versions
 
 Measured 2026-09-14/15 UTC. NIXL **1.3.2**, checkout
